@@ -10,7 +10,32 @@ export const addExercise = async (req, res) => {
       .json({ error: "Description and duration are required" });
   }
 
-  const exerciseDate = date || new Date().toISOString().split("T")[0];
+  const parsedDuration = parseInt(duration, 10);
+  if (isNaN(parsedDuration) || parsedDuration <= 0) {
+    return res
+      .status(400)
+      .json({ error: "Duration must be a positive number" });
+  }
+
+  const isValidDate = (dateString) => {
+    const dateObj = new Date(dateString);
+    return (
+      !isNaN(dateObj.getTime()) &&
+      dateString === dateObj.toISOString().split("T")[0]
+    );
+  };
+
+  const exerciseDate = date
+    ? isValidDate(date)
+      ? date
+      : null
+    : new Date().toISOString().split("T")[0];
+
+  if (!exerciseDate) {
+    return res
+      .status(400)
+      .json({ error: "Invalid date format, expected YYYY-MM-DD" });
+  }
 
   try {
     const db = await initDb();
@@ -23,14 +48,14 @@ export const addExercise = async (req, res) => {
     const result = await db.run(
       `INSERT INTO exercises (user_id, description, duration, date)
        VALUES (?, ?, ?, ?)`,
-      [_id, description, parseInt(duration, 10), exerciseDate]
+      [_id, description, parsedDuration, exerciseDate]
     );
 
     const exercise = {
       userId: _id,
       exerciseId: result.lastID,
       description,
-      duration: parseInt(duration, 10),
+      duration: parsedDuration,
       date: exerciseDate,
     };
 
@@ -59,33 +84,31 @@ export const getLogs = async (req, res) => {
       SELECT id, description, duration, date
       FROM exercises
       WHERE user_id = ?
+      ORDER BY date ASC
     `;
     const params = [_id];
 
+    const allLogs = await db.all(query, params);
+
+    let filteredLogs = allLogs;
     if (from) {
-      query += " AND date >= ?";
-      params.push(from);
+      filteredLogs = filteredLogs.filter((log) => log.date >= from);
     }
     if (to) {
-      query += " AND date <= ?";
-      params.push(to);
-    }
-    if (limit) {
-      query += " LIMIT ?";
-      params.push(parseInt(limit, 10));
+      filteredLogs = filteredLogs.filter((log) => log.date <= to);
     }
 
-    const logs = await db.all(query, params);
-    const count = await db.get(
-      `SELECT COUNT(*) as count FROM exercises WHERE user_id = ?`,
-      [_id]
-    );
+    const totalCount = filteredLogs.length;
+
+    if (limit) {
+      filteredLogs = filteredLogs.slice(0, parseInt(limit, 10));
+    }
 
     res.json({
       id: user.id,
       username: user.username,
-      count: count.count,
-      logs,
+      count: totalCount,
+      logs: filteredLogs,
     });
   } catch (err) {
     res.status(500).json({ error: "Failed to retrieve logs" });
